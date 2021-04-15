@@ -1,9 +1,11 @@
-import numpy as np
-import random
-import itertools
+from htm.bindings.algorithms import TemporalMemory
 from htm.bindings.sdr import SDR
 from htm.encoders.rdse import RDSE, RDSE_Parameters
-from htm.bindings.algorithms import TemporalMemory
+import argparse
+import itertools
+import numpy as np
+import random
+import time
 
 default_parameters = {
     'num_cells': 2000,
@@ -24,7 +26,7 @@ default_parameters = {
 
 conscious_threshold = 20/100
 
-BACKGROUND = "."
+BACKGROUND = " ."
 
 class World:
     def __init__(self, dims, objects):
@@ -61,7 +63,7 @@ class World:
                 if not bool(color):
                     string += character
                 elif color == "red":
-                    string += '\033[1m\033[31m' + character + '\033[0m'
+                    string += '\033[1m\033[41m' + character + '\033[0m'
             string += "\n"
         return string[:-1]
 
@@ -132,8 +134,6 @@ class Model:
             enc = self.enc[coords]
             if character == BACKGROUND:
                 self.local[coords] = SDR((self.area_size,))
-                # TODO: Consider modeling random background activity?
-                # self.local[coords] = SDR((self.area_size,)).randomize(enc.parameters.sparsity)
             else:
                 self.local[coords] = enc.encode(ord(character))
         # Compute the apical dendrites.
@@ -178,20 +178,18 @@ class Model:
         return character
 
     def run(self, iterations, train_not_test, character=None, verbose=True):
-        if verbose:
-            if train_not_test:  print("Training Session:")
-            else:               print("Test Session:")
         attention_spans = [];
         self.reset_attention()
         for t in range(iterations):
+            message = ""
             if not any(x >= conscious_threshold for x in self.attention_map().flat):
                 current_episode_length = 0
-                obj = self.promote_object(character, verbose=verbose)
+                obj = self.promote_object(character)
                 # self.promote_region(verbose=verbose)
+                message += "Promoted %s to \nconscious attention.\n"%obj
             self.advance()
             if verbose:
-                print(self.draw_heatmap())
-                print("="*self.world.dims[1])
+                heatmap = self.draw_heatmap()
             attn = self.attention_map()
             if train_not_test:
                 if any(x >= conscious_threshold for x in self.attention_map().flat):
@@ -204,22 +202,39 @@ class Model:
                         sum(attn.flat >= conscious_threshold) == 1):
                     current_episode_length += 1
                 else:
-                    if verbose: print("Failed.")
+                    message += "Attention failed.\n"
                     attention_spans.append(current_episode_length)
                     current_episode_length = None
                     self.reset_attention()
+            if verbose:
+                if not train_not_test: print("\033c", end='')
+                print("=="*self.world.dims[1])
+                print(heatmap)
+                print("=="*self.world.dims[1])
+                while message.count("\n") < 3: message += "\n"
+                print(message, end='')
+                print("=="*self.world.dims[1])
+                print("\n")
+                if train_not_test:      pass
+                elif message.strip():   time.sleep(1)
+                else:                   time.sleep(1/7)
         if current_episode_length is not None: attention_spans.append(current_episode_length)
         avg_attention_span = np.mean(attention_spans)
         return avg_attention_span
 
 def main(parameters, argv=None, verbose=False):
-    w = World([4,12], "1234")
+    parser = argparse.ArgumentParser()
+    args = parser.parse_args(argv)
+
+    w = World([6,10], "🐱🐶🏀🦍")
     m = Model(w)
     session_length = 20
-    num_actions = w.dims[0]*w.dims[1]*len(w.objects) * 13
+    num_actions = w.dims[0]*w.dims[1]*len(w.objects) * 10
     for epoch in range(num_actions):
         m.run(session_length, train_not_test=True, verbose=False)
-    if verbose: m.run(200, train_not_test=False, verbose=verbose)
+        if verbose and epoch % 2 == 0:
+            print("\033cTraining %d%%"%int(100 * epoch / num_actions))
+    if verbose: m.run(100, train_not_test=False, verbose=verbose)
     score = m.run(2000, train_not_test=False, verbose=False)
     if verbose: print(str(m.apical_denrites[0,0].connections))
     if verbose: print("Average attention span:", score)
